@@ -27,4 +27,5 @@ class ScreeningAnswerCartensz extends Model
     {
         return $this->belongsTo(PatientCartensz::class, 'patient_id');
     }
+
 }

@@ -153,7 +153,7 @@ public function listScreenings(Request $request)
 
 public function getScreeningDetail($uuid)
 {
-    $patient = PatientCartensz::with(['answers', 'screeningCartensz'])
+    $patient = PatientCartensz::with(['answers', 'screeningCartensz', 'answers.question'])
         ->where('uuid', $uuid)
         ->first();
 
@@ -189,11 +189,13 @@ public function getScreeningDetail($uuid)
             ] : null,
             'answers' => $patient->answers->map(function ($answer) {
                 return [
-                    'question_id' => $answer->question_id,
-                    'answer'      => $answer->answer_text,
+                    'question_id'   => $answer->question_id,
+                    'question_text' => $answer->question->question_text ?? null,
+                    'answer'        => $answer->answer_text,
                 ];
             }),
         ],
     ]);
 }
+
 }
