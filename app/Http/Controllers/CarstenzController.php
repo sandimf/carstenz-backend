@@ -211,10 +211,7 @@ private function toCsvValue($value) {
     }
 
     // Cek apakah string berupa JSON
-    private function isJson($string) {
-        json_decode($string);
-        return json_last_error() === JSON_ERROR_NONE;
-    }
+
 
 public function exportScreeningsCsv(Request $request)
 {
@@ -228,7 +225,7 @@ public function exportScreeningsCsv(Request $request)
         $handle = fopen('php://output', 'w');
 
         // Header CSV
-        $header = ['Name', 'Email', 'Contact', 'Passport Number', 'Screening Date'];
+        $header = ['Name','Email','Contact','Passport Number','Screening Date'];
         foreach ($questions as $q) {
             $header[] = $q->question_text;
         }
@@ -236,31 +233,42 @@ public function exportScreeningsCsv(Request $request)
 
         foreach ($patients as $patient) {
             $row = [
-                $this->toCsvValue($patient->name),
-                $this->toCsvValue($patient->email),
-                $this->toCsvValue($patient->contact),
-                $this->toCsvValue($patient->passport_number),
-                $this->toCsvValue($patient->screeningCartensz->screening_date ?? ''),
+                $patient->name,
+                $patient->email,
+                $patient->contact,
+                $patient->passport_number,
+                $patient->screeningCartensz->screening_date ?? '',
             ];
 
             $answersMap = $patient->answers->keyBy('question_id');
 
             foreach ($questions as $question) {
-                $answer = $answersMap[$question->id]->answer_text ?? '';
+                $answerModel = $answersMap[$question->id] ?? null;
+                $answer = '';
 
-                // Pastikan jawaban selalu string
-                if (is_array($answer)) {
-                    $answer = implode(', ', $answer);
-                } elseif (is_object($answer)) {
-                    $answer = json_encode($answer);
-                } elseif (is_string($answer) && $this->isJson($answer)) {
-                    $decoded = json_decode($answer, true);
-                    if (is_array($decoded)) {
-                        $answer = implode(', ', $decoded);
+                if ($answerModel) {
+                    $answer = $answerModel->answer_text;
+
+                    // Jika string JSON, decode
+                    if (is_string($answer) && $this->isJson($answer)) {
+                        $decoded = json_decode($answer, true);
+                        if (is_array($decoded)) {
+                            $answer = implode(', ', $decoded);
+                        }
+                    }
+
+                    // Jika array langsung
+                    if (is_array($answer)) {
+                        $answer = implode(', ', $answer);
+                    }
+
+                    // Jika object, encode
+                    if (is_object($answer)) {
+                        $answer = json_encode($answer);
                     }
                 }
 
-                $row[] = $this->toCsvValue($answer);
+                $row[] = $answer;
             }
 
             fputcsv($handle, $row);
@@ -276,6 +284,11 @@ public function exportScreeningsCsv(Request $request)
     return $response;
 }
 
+
+    private function isJson($string) {
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
 
 }
 
