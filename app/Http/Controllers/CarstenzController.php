@@ -16,6 +16,7 @@ use App\Services\Telegram\TelegramService;
 use App\Http\Requests\ScreeningCarstenszRequest;
 use App\Http\Resources\Screening\QuestionnaireResource;
 use App\Models\ClinicServices\Screening\ScreeningAnswer;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CarstenzController extends Controller
 {
@@ -25,6 +26,7 @@ class CarstenzController extends Controller
 
         return QuestionnaireResource::collection($questions);
     }
+
     public function store(ScreeningCarstenszRequest $request)
     {
         $validated = $request->validated();
@@ -107,14 +109,104 @@ class CarstenzController extends Controller
     }
 
 
-public function listScreenings(Request $request)
+    public function listScreenings(Request $request)
+    {
+        $search = $request->input('search');
+
+        $query = PatientCartensz::with(['answers', 'screeningCartensz'])
+            ->orderBy('created_at', 'desc');
+
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                ->orWhere('email', 'like', "%{$search}%")
+                ->orWhere('passport_number', 'like', "%{$search}%");
+            });
+        }
+
+        $patients = $query->get();
+
+        $data = $patients->map(function ($patient) {
+            return [
+                'id'                => $patient->id,
+                'uuid'              => $patient->uuid,
+                'name'              => $patient->name,
+                'email'             => $patient->email,
+                'contact'           => $patient->contact,
+                'passport_number'   => $patient->passport_number,
+                'screening_status'  => $patient->screeningCartensz->screening_status ?? 'pending',
+                'queue'             => $patient->screeningCartensz->queue ?? null,
+                'screening_date'    => $patient->screeningCartensz->screening_date ?? null,
+                'answers'           => $patient->answers->map(function ($answer) {
+                    return [
+                        'question_id' => $answer->question_id,
+                        'answer'      => $answer->answer_text,
+                    ];
+                }),
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => $data,
+        ]);
+    }
+
+    public function getScreeningDetail($uuid)
+    {
+        $patient = PatientCartensz::with(['answers', 'screeningCartensz', 'answers.question'])
+            ->where('uuid', $uuid)
+            ->first();
+
+        if (! $patient) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Screening data not found',
+            ], 404);
+        }
+
+        $screening = $patient->screeningCartensz;
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'id'               => $patient->id,
+                'uuid'             => $patient->uuid,
+                'name'             => $patient->name,
+                'email'            => $patient->email,
+                'contact'          => $patient->contact,
+                'passport_number'  => $patient->passport_number,
+                'date_of_birth'    => $patient->date_of_birth,
+                'gender'           => $patient->gender,
+                'nationality'      => $patient->nationality,
+                'screening' => $screening ? [
+                    'id'                  => $screening->id,
+                    'uuid'                => $screening->uuid,
+                    'screening_status'    => $screening->screening_status,
+                    'health_status'       => $screening->health_status,
+                    'health_check_status' => $screening->health_check_status,
+                    'queue'               => $screening->queue,
+                    'screening_date'      => $screening->screening_date,
+                ] : null,
+                'answers' => $patient->answers->map(function ($answer) {
+                    return [
+                        'question_id'   => $answer->question_id,
+                        'question_text' => $answer->question->question_text ?? null,
+                        'answer'        => $answer->answer_text,
+                    ];
+                }),
+            ],
+        ]);
+    }
+
+    public function exportScreeningsCsv(Request $request)
 {
     $search = $request->input('search');
 
     $query = PatientCartensz::with(['answers', 'screeningCartensz'])
         ->orderBy('created_at', 'desc');
 
-    // Jika ada search query
     if ($search) {
         $query->where(function ($q) use ($search) {
             $q->where('name', 'like', "%{$search}%")
@@ -125,77 +217,55 @@ public function listScreenings(Request $request)
 
     $patients = $query->get();
 
-    $data = $patients->map(function ($patient) {
-        return [
-            'id'                => $patient->id,
-            'uuid'              => $patient->uuid,
-            'name'              => $patient->name,
-            'email'             => $patient->email,
-            'contact'           => $patient->contact,
-            'passport_number'   => $patient->passport_number,
-            'screening_status'  => $patient->screeningCartensz->screening_status ?? 'pending',
-            'queue'             => $patient->screeningCartensz->queue ?? null,
-            'screening_date'    => $patient->screeningCartensz->screening_date ?? null,
-            'answers'           => $patient->answers->map(function ($answer) {
-                return [
-                    'question_id' => $answer->question_id,
-                    'answer'      => $answer->answer_text,
-                ];
-            }),
+    // Ambil semua pertanyaan agar header CSV lengkap
+    $questions = ScreeningQuestionCartensz::all();
+
+    $response = new StreamedResponse(function() use ($patients, $questions) {
+        $handle = fopen('php://output', 'w');
+
+        // Header CSV
+        $header = [
+            'Name',
+            'Email',
+            'Contact',
+            'Passport Number',
+            'Screening Date',
         ];
+
+        // Tambahkan kolom untuk setiap pertanyaan
+        foreach ($questions as $question) {
+            $header[] = $question->question_text;
+        }
+
+        fputcsv($handle, $header);
+
+        foreach ($patients as $patient) {
+            $row = [
+                $patient->name,
+                $patient->email,
+                $patient->contact,
+                $patient->passport_number,
+                $patient->screeningCartensz->screening_date ?? null,
+            ];
+
+            // Map jawaban ke setiap pertanyaan
+            $answersMap = $patient->answers->keyBy('question_id');
+
+            foreach ($questions as $question) {
+                $row[] = $answersMap[$question->id]->answer_text ?? '';
+            }
+
+            fputcsv($handle, $row);
+        }
+
+        fclose($handle);
     });
 
-    return response()->json([
-        'status' => 'success',
-        'data'   => $data,
-    ]);
-}
+    $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
+    $response->headers->set('Content-Type', 'text/csv');
+    $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
 
-public function getScreeningDetail($uuid)
-{
-    $patient = PatientCartensz::with(['answers', 'screeningCartensz', 'answers.question'])
-        ->where('uuid', $uuid)
-        ->first();
-
-    if (! $patient) {
-        return response()->json([
-            'status' => 'error',
-            'message' => 'Screening data not found',
-        ], 404);
-    }
-
-    $screening = $patient->screeningCartensz;
-
-    return response()->json([
-        'status' => 'success',
-        'data' => [
-            'id'               => $patient->id,
-            'uuid'             => $patient->uuid,
-            'name'             => $patient->name,
-            'email'            => $patient->email,
-            'contact'          => $patient->contact,
-            'passport_number'  => $patient->passport_number,
-            'date_of_birth'    => $patient->date_of_birth,
-            'gender'           => $patient->gender,
-            'nationality'      => $patient->nationality,
-            'screening' => $screening ? [
-                'id'                  => $screening->id,
-                'uuid'                => $screening->uuid,
-                'screening_status'    => $screening->screening_status,
-                'health_status'       => $screening->health_status,
-                'health_check_status' => $screening->health_check_status,
-                'queue'               => $screening->queue,
-                'screening_date'      => $screening->screening_date,
-            ] : null,
-            'answers' => $patient->answers->map(function ($answer) {
-                return [
-                    'question_id'   => $answer->question_id,
-                    'question_text' => $answer->question->question_text ?? null,
-                    'answer'        => $answer->answer_text,
-                ];
-            }),
-        ],
-    ]);
+    return $response;
 }
 
 }

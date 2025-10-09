@@ -9,6 +9,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/screening/cartensz/success/{uuid}', [CarstenzController::class, 'success']);
     Route::get('/screening/cartensz/list', [CarstenzController::class, 'listScreenings']);
     Route::get('/screening/cartensz/detail/{uuid}', [CarstenzController::class, 'getScreeningDetail']);
+    Route::get('/screening/cartensz/csv', [CarstenzController::class, 'exportScreeningsCsv']);
 });
 
 
