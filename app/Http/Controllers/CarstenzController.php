@@ -200,79 +200,86 @@ class CarstenzController extends Controller
         ]);
     }
 
-    public function exportScreeningsCsv(Request $request)
-{
-    $query = PatientCartensz::with(['answers', 'screeningCartensz'])
-        ->orderBy('created_at', 'desc');
-
-    $patients = $query->get();
-
-    // Ambil semua pertanyaan agar header CSV lengkap
-    $questions = ScreeningQuestionCartensz::all();
-
-    $response = new StreamedResponse(function() use ($patients, $questions) {
-        $handle = fopen('php://output', 'w');
-
-        // Header CSV
-        $header = [
-            'Name',
-            'Email',
-            'Contact',
-            'Passport Number',
-            'Screening Date',
-        ];
-
-        foreach ($questions as $question) {
-            $header[] = $question->question_text;
+private function toCsvValue($value) {
+        if (is_array($value)) {
+            return implode(', ', $value);
         }
+        if (is_object($value)) {
+            return method_exists($value, '__toString') ? (string)$value : json_encode($value);
+        }
+        return (string) $value;
+    }
 
-        fputcsv($handle, $header);
+    // Cek apakah string berupa JSON
+    private function isJson($string) {
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
 
-        foreach ($patients as $patient) {
-            $row = [
-                $patient->name,
-                $patient->email,
-                $patient->contact,
-                $patient->passport_number,
-                $patient->screeningCartensz->screening_date ?? '',
+    public function exportScreeningsCsv(Request $request)
+    {
+        $query = PatientCartensz::with(['answers', 'screeningCartensz'])
+            ->orderBy('created_at', 'desc');
+
+        $patients = $query->get();
+
+        // Ambil semua pertanyaan agar header CSV lengkap
+        $questions = ScreeningQuestionCartensz::all();
+
+        $response = new StreamedResponse(function() use ($patients, $questions) {
+            $handle = fopen('php://output', 'w');
+
+            // Header CSV
+            $header = [
+                'Name',
+                'Email',
+                'Contact',
+                'Passport Number',
+                'Screening Date',
             ];
 
-            // Map jawaban ke setiap pertanyaan
-            $answersMap = $patient->answers->keyBy('question_id');
-
             foreach ($questions as $question) {
-                $answer = $answersMap[$question->id]->answer_text ?? '';
-                
-                // Decode JSON jika jawaban berupa array
-                if ($answer !== '' && $this->isJson($answer)) {
-                    $decoded = json_decode($answer, true);
-                    if (is_array($decoded)) {
-                        $answer = implode(', ', $decoded);
-                    }
-                }
-
-                $row[] = $answer;
+                $header[] = $this->toCsvValue($question->question_text);
             }
 
-            fputcsv($handle, $row);
-        }
+            fputcsv($handle, $header);
 
-        fclose($handle);
-    });
+            foreach ($patients as $patient) {
+                $row = [
+                    $this->toCsvValue($patient->name),
+                    $this->toCsvValue($patient->email),
+                    $this->toCsvValue($patient->contact),
+                    $this->toCsvValue($patient->passport_number),
+                    $this->toCsvValue($patient->screeningCartensz->screening_date ?? ''),
+                ];
 
-    $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
-    $response->headers->set('Content-Type', 'text/csv');
-    $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
+                $answersMap = $patient->answers->keyBy('question_id');
 
-    return $response;
+                foreach ($questions as $question) {
+                    $answer = $answersMap[$question->id]->answer_text ?? '';
+
+                    // Jika jawaban berupa JSON array, decode dan gabungkan menjadi string
+                    if ($answer !== '' && $this->isJson($answer)) {
+                        $decoded = json_decode($answer, true);
+                        if (is_array($decoded)) {
+                            $answer = implode(', ', $decoded);
+                        }
+                    }
+
+                    $row[] = $this->toCsvValue($answer);
+                }
+
+                fputcsv($handle, $row);
+            }
+
+            fclose($handle);
+        });
+
+        $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
+        $response->headers->set('Content-Type', 'text/csv');
+        $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
+
+        return $response;
+    }
 }
 
-/**
- * Cek apakah string valid JSON
- */
-private function isJson($string) {
-    json_decode($string);
-    return json_last_error() === JSON_ERROR_NONE;
-}
-
-}
