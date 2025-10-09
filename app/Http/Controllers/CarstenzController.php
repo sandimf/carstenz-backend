@@ -202,18 +202,8 @@ class CarstenzController extends Controller
 
     public function exportScreeningsCsv(Request $request)
 {
-    $search = $request->input('search');
-
     $query = PatientCartensz::with(['answers', 'screeningCartensz'])
         ->orderBy('created_at', 'desc');
-
-    if ($search) {
-        $query->where(function ($q) use ($search) {
-            $q->where('name', 'like', "%{$search}%")
-              ->orWhere('email', 'like', "%{$search}%")
-              ->orWhere('passport_number', 'like', "%{$search}%");
-        });
-    }
 
     $patients = $query->get();
 
@@ -232,7 +222,6 @@ class CarstenzController extends Controller
             'Screening Date',
         ];
 
-        // Tambahkan kolom untuk setiap pertanyaan
         foreach ($questions as $question) {
             $header[] = $question->question_text;
         }
@@ -245,14 +234,24 @@ class CarstenzController extends Controller
                 $patient->email,
                 $patient->contact,
                 $patient->passport_number,
-                $patient->screeningCartensz->screening_date ?? null,
+                $patient->screeningCartensz->screening_date ?? '',
             ];
 
             // Map jawaban ke setiap pertanyaan
             $answersMap = $patient->answers->keyBy('question_id');
 
             foreach ($questions as $question) {
-                $row[] = $answersMap[$question->id]->answer_text ?? '';
+                $answer = $answersMap[$question->id]->answer_text ?? '';
+                
+                // Decode JSON jika jawaban berupa array
+                if ($answer !== '' && $this->isJson($answer)) {
+                    $decoded = json_decode($answer, true);
+                    if (is_array($decoded)) {
+                        $answer = implode(', ', $decoded);
+                    }
+                }
+
+                $row[] = $answer;
             }
 
             fputcsv($handle, $row);
@@ -266,6 +265,14 @@ class CarstenzController extends Controller
     $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
 
     return $response;
+}
+
+/**
+ * Cek apakah string valid JSON
+ */
+private function isJson($string) {
+    json_decode($string);
+    return json_last_error() === JSON_ERROR_NONE;
 }
 
 }
