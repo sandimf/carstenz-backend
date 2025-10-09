@@ -216,65 +216,66 @@ private function toCsvValue($value) {
         return json_last_error() === JSON_ERROR_NONE;
     }
 
-    public function exportScreeningsCsv(Request $request)
-    {
-        $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
-            ->orderBy('created_at', 'desc')
-            ->get();
+public function exportScreeningsCsv(Request $request)
+{
+    $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
+        ->orderBy('created_at', 'desc')
+        ->get();
 
-        $questions = ScreeningQuestionCartensz::all();
+    $questions = ScreeningQuestionCartensz::all();
 
-        $response = new StreamedResponse(function() use ($patients, $questions) {
-            $handle = fopen('php://output', 'w');
+    $response = new StreamedResponse(function() use ($patients, $questions) {
+        $handle = fopen('php://output', 'w');
 
-            // Header CSV
-            $header = ['Name','Email','Contact','Passport Number','Screening Date'];
-            foreach ($questions as $q) {
-                $header[] = $q->question_text;
-            }
-            fputcsv($handle, $header);
+        // Header CSV
+        $header = ['Name', 'Email', 'Contact', 'Passport Number', 'Screening Date'];
+        foreach ($questions as $q) {
+            $header[] = $q->question_text;
+        }
+        fputcsv($handle, $header);
 
-            foreach ($patients as $patient) {
-                $row = [
-                    $this->toCsvValue($patient->name),
-                    $this->toCsvValue($patient->email),
-                    $this->toCsvValue($patient->contact),
-                    $this->toCsvValue($patient->passport_number),
-                    $this->toCsvValue($patient->screeningCartensz->screening_date ?? ''),
-                ];
+        foreach ($patients as $patient) {
+            $row = [
+                $this->toCsvValue($patient->name),
+                $this->toCsvValue($patient->email),
+                $this->toCsvValue($patient->contact),
+                $this->toCsvValue($patient->passport_number),
+                $this->toCsvValue($patient->screeningCartensz->screening_date ?? ''),
+            ];
 
-                $answersMap = $patient->answers->keyBy('question_id');
+            $answersMap = $patient->answers->keyBy('question_id');
 
-                foreach ($questions as $question) {
-                    $answer = $answersMap[$question->id]->answer_text ?? '';
+            foreach ($questions as $question) {
+                $answer = $answersMap[$question->id]->answer_text ?? '';
 
-                    if ($answer !== '') {
-                        // Decode JSON array menjadi string
-                        if (is_string($answer) && $this->isJson($answer)) {
-                            $decoded = json_decode($answer, true);
-                            if (is_array($decoded)) {
-                                $answer = implode(', ', $decoded);
-                            }
-                        } elseif (is_array($answer)) {
-                            $answer = implode(', ', $answer);
-                        }
+                // Pastikan jawaban selalu string
+                if (is_array($answer)) {
+                    $answer = implode(', ', $answer);
+                } elseif (is_object($answer)) {
+                    $answer = json_encode($answer);
+                } elseif (is_string($answer) && $this->isJson($answer)) {
+                    $decoded = json_decode($answer, true);
+                    if (is_array($decoded)) {
+                        $answer = implode(', ', $decoded);
                     }
-
-                    $row[] = $this->toCsvValue($answer);
                 }
 
-                fputcsv($handle, $row);
+                $row[] = $this->toCsvValue($answer);
             }
 
-            fclose($handle);
-        });
+            fputcsv($handle, $row);
+        }
 
-        $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
-        $response->headers->set('Content-Type', 'text/csv');
-        $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
+        fclose($handle);
+    });
 
-        return $response;
-    }
+    $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
+    $response->headers->set('Content-Type', 'text/csv');
+    $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
+
+    return $response;
+}
+
 
 }
 
