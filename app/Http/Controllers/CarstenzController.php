@@ -247,34 +247,43 @@ public function exportScreeningsCsv(Request $request)
                 $answer = '';
 
                 if ($answerModel) {
-                    $answer = $answerModel->answer_text;
+                    $raw = $answerModel->answer_text;
 
-                    // Jika JSON string, decode dulu
-                    if ($this->isJson($answer)) {
-                        $decoded = json_decode($answer, true);
+                    // Pastikan tipe string
+                    if (is_array($raw)) {
+                        $answer = implode(', ', $raw);
+                    } elseif (is_object($raw)) {
+                        $answer = json_encode($raw);
+                    } elseif ($this->isJson($raw)) {
+                        $decoded = json_decode($raw, true);
                         if (is_array($decoded)) {
-                            $answer = implode('; ', $decoded);
+                            $answer = implode(', ', $decoded);
                         } elseif ($decoded !== null) {
                             $answer = (string)$decoded;
                         }
+                    } else {
+                        $answer = (string)$raw;
                     }
 
-                    // Jika array
-                    if (is_array($answer)) {
-                        $answer = implode('; ', $answer);
-                    }
+                    // Bersihkan bracket JSON ["text"] menjadi text
+                    $answer = trim($answer, "[]\"'");
+                }
 
-                    // Jika object
-                    if (is_object($answer)) {
-                        $answer = method_exists($answer, '__toString') ? (string)$answer : json_encode($answer);
-                    }
-
-                    // Pastikan selalu string
-                    $answer = (string)$answer;
+                // Pastikan bukan array/object sebelum tulis
+                if (is_array($answer) || is_object($answer)) {
+                    $answer = json_encode($answer);
                 }
 
                 $row[] = $answer;
             }
+
+            // Pastikan semua kolom sudah string
+            $row = array_map(function($v) {
+                if (is_array($v) || is_object($v)) {
+                    return json_encode($v);
+                }
+                return (string) $v;
+            }, $row);
 
             fputcsv($handle, $row);
         }
@@ -288,6 +297,13 @@ public function exportScreeningsCsv(Request $request)
 
     return $response;
 }
+
+private function isJson($string) {
+    if (!is_string($string)) return false;
+    json_decode($string);
+    return json_last_error() === JSON_ERROR_NONE;
+}
+
 
 private function isJson($string) {
     if (!is_string($string)) return false;
