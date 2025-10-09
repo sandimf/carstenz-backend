@@ -215,7 +215,10 @@ private function toCsvValue($value) {
 
 public function exportScreeningsCsv(Request $request)
 {
-    $patients = PatientCartensz::with(['answers', 'screeningCartensz'])->orderBy('created_at', 'desc')->get();
+    $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
+        ->orderBy('created_at', 'desc')
+        ->get();
+
     $questions = ScreeningQuestionCartensz::all();
 
     $response = new StreamedResponse(function() use ($patients, $questions) {
@@ -223,7 +226,9 @@ public function exportScreeningsCsv(Request $request)
 
         // Header CSV
         $header = ['Name','Email','Contact','Passport Number','Screening Date'];
-        foreach ($questions as $q) $header[] = $q->question_text;
+        foreach ($questions as $q) {
+            $header[] = $q->question_text;
+        }
         fputcsv($handle, $header);
 
         foreach ($patients as $patient) {
@@ -244,23 +249,28 @@ public function exportScreeningsCsv(Request $request)
                 if ($answerModel) {
                     $answer = $answerModel->answer_text;
 
-                    // Jika JSON, decode & gabungkan menjadi string
+                    // Jika JSON string, decode dulu
                     if ($this->isJson($answer)) {
                         $decoded = json_decode($answer, true);
                         if (is_array($decoded)) {
                             $answer = implode('; ', $decoded);
+                        } elseif ($decoded !== null) {
+                            $answer = (string)$decoded;
                         }
                     }
 
-                    // Jika array langsung, gabungkan
+                    // Jika array
                     if (is_array($answer)) {
                         $answer = implode('; ', $answer);
                     }
 
-                    // Jika object, convert ke string
+                    // Jika object
                     if (is_object($answer)) {
                         $answer = method_exists($answer, '__toString') ? (string)$answer : json_encode($answer);
                     }
+
+                    // Pastikan selalu string
+                    $answer = (string)$answer;
                 }
 
                 $row[] = $answer;
@@ -279,12 +289,12 @@ public function exportScreeningsCsv(Request $request)
     return $response;
 }
 
+private function isJson($string) {
+    if (!is_string($string)) return false;
+    json_decode($string);
+    return json_last_error() === JSON_ERROR_NONE;
+}
 
-
-    private function isJson($string) {
-        json_decode($string);
-        return json_last_error() === JSON_ERROR_NONE;
-    }
 
 }
 
