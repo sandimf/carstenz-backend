@@ -218,30 +218,20 @@ private function toCsvValue($value) {
 
     public function exportScreeningsCsv(Request $request)
     {
-        $query = PatientCartensz::with(['answers', 'screeningCartensz'])
-            ->orderBy('created_at', 'desc');
+        $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
+            ->orderBy('created_at', 'desc')
+            ->get();
 
-        $patients = $query->get();
-
-        // Ambil semua pertanyaan agar header CSV lengkap
         $questions = ScreeningQuestionCartensz::all();
 
         $response = new StreamedResponse(function() use ($patients, $questions) {
             $handle = fopen('php://output', 'w');
 
             // Header CSV
-            $header = [
-                'Name',
-                'Email',
-                'Contact',
-                'Passport Number',
-                'Screening Date',
-            ];
-
-            foreach ($questions as $question) {
-                $header[] = $this->toCsvValue($question->question_text);
+            $header = ['Name','Email','Contact','Passport Number','Screening Date'];
+            foreach ($questions as $q) {
+                $header[] = $q->question_text;
             }
-
             fputcsv($handle, $header);
 
             foreach ($patients as $patient) {
@@ -258,11 +248,15 @@ private function toCsvValue($value) {
                 foreach ($questions as $question) {
                     $answer = $answersMap[$question->id]->answer_text ?? '';
 
-                    // Jika jawaban berupa JSON array, decode dan gabungkan menjadi string
-                    if ($answer !== '' && $this->isJson($answer)) {
-                        $decoded = json_decode($answer, true);
-                        if (is_array($decoded)) {
-                            $answer = implode(', ', $decoded);
+                    if ($answer !== '') {
+                        // Decode JSON array menjadi string
+                        if (is_string($answer) && $this->isJson($answer)) {
+                            $decoded = json_decode($answer, true);
+                            if (is_array($decoded)) {
+                                $answer = implode(', ', $decoded);
+                            }
+                        } elseif (is_array($answer)) {
+                            $answer = implode(', ', $answer);
                         }
                     }
 
@@ -281,5 +275,6 @@ private function toCsvValue($value) {
 
         return $response;
     }
+
 }
 
