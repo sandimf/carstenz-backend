@@ -200,110 +200,95 @@ class CarstenzController extends Controller
         ]);
     }
 
-private function toCsvValue($value) {
+    private function toCsvValue($value)
+    {
         if (is_array($value)) {
-            return implode(', ', $value);
+            return implode(', ', array_map('strval', $value));
         }
         if (is_object($value)) {
             return method_exists($value, '__toString') ? (string)$value : json_encode($value);
         }
-        return (string) $value;
+        return (string)$value;
     }
 
-    // Cek apakah string berupa JSON
-
-
-public function exportScreeningsCsv(Request $request)
-{
-    $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
-        ->orderBy('created_at', 'desc')
-        ->get();
-
-    $questions = ScreeningQuestionCartensz::all();
-
-    $response = new StreamedResponse(function() use ($patients, $questions) {
-        $handle = fopen('php://output', 'w');
-
-        // Header CSV
-        $header = ['Name','Email','Contact','Passport Number','Screening Date'];
-        foreach ($questions as $q) {
-            $header[] = $q->question_text;
+    private function flattenAnswer($raw)
+    {
+        if ($this->isJson($raw)) {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return implode(', ', array_map('strval', $decoded));
+            }
+            return (string)$decoded;
         }
-        fputcsv($handle, $header);
 
-        foreach ($patients as $patient) {
-            $row = [
-                $patient->name,
-                $patient->email,
-                $patient->contact,
-                $patient->passport_number,
-                $patient->screeningCartensz->screening_date ?? '',
-            ];
+        if (is_array($raw)) return implode(', ', array_map('strval', $raw));
+        if (is_object($raw)) return json_encode($raw);
+        return (string)$raw;
+    }
 
-            $answersMap = $patient->answers->keyBy('question_id');
+    public function exportScreeningsCsv(Request $request)
+    {
+        $patients = PatientCartensz::with(['answers', 'screeningCartensz'])
+            ->orderBy('created_at', 'desc')
+            ->get();
 
-            foreach ($questions as $question) {
-                $answerModel = $answersMap[$question->id] ?? null;
-                $answer = '';
+        $questions = ScreeningQuestionCartensz::all();
 
-                if ($answerModel) {
-                    $raw = $answerModel->answer_text;
+        $response = new StreamedResponse(function () use ($patients, $questions) {
+            $handle = fopen('php://output', 'w');
 
-                    // Pastikan tipe string
-                    if (is_array($raw)) {
-                        $answer = implode(', ', $raw);
-                    } elseif (is_object($raw)) {
-                        $answer = json_encode($raw);
-                    } elseif ($this->isJson($raw)) {
-                        $decoded = json_decode($raw, true);
-                        if (is_array($decoded)) {
-                            $answer = implode(', ', $decoded);
-                        } elseif ($decoded !== null) {
-                            $answer = (string)$decoded;
-                        }
-                    } else {
-                        $answer = (string)$raw;
-                    }
+            // Header CSV
+            $header = ['Name', 'Email', 'Contact', 'Passport Number', 'Screening Date'];
+            foreach ($questions as $q) {
+                $header[] = $q->question_text;
+            }
+            fputcsv($handle, $header);
 
-                    // Bersihkan bracket JSON ["text"] menjadi text
+            foreach ($patients as $patient) {
+                $row = [
+                    $patient->name,
+                    $patient->email,
+                    $patient->contact,
+                    $patient->passport_number,
+                    $patient->screeningCartensz->screening_date ?? '',
+                ];
+
+                $answersMap = $patient->answers->keyBy('question_id');
+
+                foreach ($questions as $question) {
+                    $answerModel = $answersMap[$question->id] ?? null;
+                    $answer = $answerModel ? $this->flattenAnswer($answerModel->answer_text) : '';
                     $answer = trim($answer, "[]\"'");
+                    $row[] = $answer;
                 }
 
-                // Pastikan bukan array/object sebelum tulis
-                if (is_array($answer) || is_object($answer)) {
-                    $answer = json_encode($answer);
-                }
+                // Pastikan semua kolom adalah string
+                $row = array_map(function ($v) {
+                    if (is_array($v) || is_object($v)) {
+                        return json_encode($v);
+                    }
+                    return (string)$v;
+                }, $row);
 
-                $row[] = $answer;
+                fputcsv($handle, $row);
             }
 
-            // Pastikan semua kolom sudah string
-            $row = array_map(function($v) {
-                if (is_array($v) || is_object($v)) {
-                    return json_encode($v);
-                }
-                return (string) $v;
-            }, $row);
+            fclose($handle);
+        });
 
-            fputcsv($handle, $row);
-        }
+        $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
+        $response->headers->set('Content-Type', 'text/csv');
+        $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
 
-        fclose($handle);
-    });
+        return $response;
+    }
 
-    $filename = 'screenings_' . now()->format('Ymd_His') . '.csv';
-    $response->headers->set('Content-Type', 'text/csv');
-    $response->headers->set('Content-Disposition', "attachment; filename={$filename}");
-
-    return $response;
-}
-
-private function isJson($string) {
-    if (!is_string($string)) return false;
-    json_decode($string);
-    return json_last_error() === JSON_ERROR_NONE;
-}
-
+    private function isJson($string)
+    {
+        if (!is_string($string)) return false;
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
 
 }
 
