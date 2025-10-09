@@ -8,22 +8,18 @@ use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Models\PatientCartensz;
 use App\Models\ScreeningCartensz;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
 use App\Models\ScreeningAnswerCartensz;
 use App\Models\ScreeningQuestionCartensz;
-use App\Services\Telegram\TelegramService;
 use App\Http\Requests\ScreeningCarstenszRequest;
 use App\Http\Resources\Screening\QuestionnaireResource;
-use App\Models\ClinicServices\Screening\ScreeningAnswer;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CarstenzController extends Controller
 {
-
-    public function index(){
+    public function index()
+    {
         $questions = ScreeningQuestionCartensz::all();
-
         return QuestionnaireResource::collection($questions);
     }
 
@@ -32,14 +28,14 @@ class CarstenzController extends Controller
         $validated = $request->validated();
         $answersRaw = $validated['answers'];
         $answers = is_string($answersRaw) ? json_decode($answersRaw, true) : $answersRaw;
-        if (! is_array($answers)) {
+
+        if (!is_array($answers)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Format jawaban tidak valid',
             ], 422);
         }
 
-        // Buat user
         $user = User::create([
             'email' => $validated['email'],
             'name'  => $validated['name'] ?? 'Guest',
@@ -75,7 +71,7 @@ class CarstenzController extends Controller
 
         foreach ($answers as $answer) {
             ScreeningAnswerCartensz::create([
-                'patient_id'  => $patient->id, 
+                'patient_id'  => $patient->id,
                 'question_id' => $answer['questioner_id'],
                 'answer_text' => is_array($answer['answer'])
                     ? json_encode($answer['answer'])
@@ -108,7 +104,6 @@ class CarstenzController extends Controller
         ], 201);
     }
 
-
     public function listScreenings(Request $request)
     {
         $search = $request->input('search');
@@ -116,12 +111,11 @@ class CarstenzController extends Controller
         $query = PatientCartensz::with(['answers', 'screeningCartensz'])
             ->orderBy('created_at', 'desc');
 
-
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                ->orWhere('email', 'like', "%{$search}%")
-                ->orWhere('passport_number', 'like', "%{$search}%");
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('passport_number', 'like', "%{$search}%");
             });
         }
 
@@ -159,7 +153,7 @@ class CarstenzController extends Controller
             ->where('uuid', $uuid)
             ->first();
 
-        if (! $patient) {
+        if (!$patient) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Screening data not found',
@@ -200,29 +194,35 @@ class CarstenzController extends Controller
         ]);
     }
 
-    private function toCsvValue($value)
+    private function safeToString($value): string
     {
+        if (is_null($value)) return '';
+        if (is_scalar($value)) return (string) $value;
         if (is_array($value)) {
-            return implode(', ', array_map('strval', $value));
+            return implode(', ', array_map(fn($v) => $this->safeToString($v), $value));
         }
         if (is_object($value)) {
-            return method_exists($value, '__toString') ? (string)$value : json_encode($value);
+            if (method_exists($value, '__toString')) return (string) $value;
+            return json_encode($value, JSON_UNESCAPED_UNICODE);
         }
-        return (string)$value;
+        return '';
     }
 
     private function flattenAnswer($raw)
     {
+        // JSON string
         if ($this->isJson($raw)) {
             $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                return implode(', ', array_map('strval', $decoded));
-            }
-            return (string)$decoded;
+            return $this->safeToString($decoded);
         }
 
-        if (is_array($raw)) return implode(', ', array_map('strval', $raw));
-        if (is_object($raw)) return json_encode($raw);
+        // Array langsung
+        if (is_array($raw)) return $this->safeToString($raw);
+
+        // Object (misal Collection / Eloquent model)
+        if (is_object($raw)) return $this->safeToString($raw);
+
+        // Nilai biasa
         return (string)$raw;
     }
 
@@ -237,7 +237,6 @@ class CarstenzController extends Controller
         $response = new StreamedResponse(function () use ($patients, $questions) {
             $handle = fopen('php://output', 'w');
 
-            // Header CSV
             $header = ['Name', 'Email', 'Contact', 'Passport Number', 'Screening Date'];
             foreach ($questions as $q) {
                 $header[] = $q->question_text;
@@ -246,11 +245,11 @@ class CarstenzController extends Controller
 
             foreach ($patients as $patient) {
                 $row = [
-                    $patient->name,
-                    $patient->email,
-                    $patient->contact,
-                    $patient->passport_number,
-                    $patient->screeningCartensz->screening_date ?? '',
+                    $this->safeToString($patient->name),
+                    $this->safeToString($patient->email),
+                    $this->safeToString($patient->contact),
+                    $this->safeToString($patient->passport_number),
+                    $this->safeToString($patient->screeningCartensz->screening_date ?? ''),
                 ];
 
                 $answersMap = $patient->answers->keyBy('question_id');
@@ -259,16 +258,8 @@ class CarstenzController extends Controller
                     $answerModel = $answersMap[$question->id] ?? null;
                     $answer = $answerModel ? $this->flattenAnswer($answerModel->answer_text) : '';
                     $answer = trim($answer, "[]\"'");
-                    $row[] = $answer;
+                    $row[] = $this->safeToString($answer);
                 }
-
-                // Pastikan semua kolom adalah string
-                $row = array_map(function ($v) {
-                    if (is_array($v) || is_object($v)) {
-                        return json_encode($v);
-                    }
-                    return (string)$v;
-                }, $row);
 
                 fputcsv($handle, $row);
             }
@@ -289,6 +280,4 @@ class CarstenzController extends Controller
         json_decode($string);
         return json_last_error() === JSON_ERROR_NONE;
     }
-
 }
-
